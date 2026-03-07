@@ -30,6 +30,7 @@ export type {
   FileConfig,
   PersistedState,
   RunRecord,
+  RunUploadRecord,
   RuntimeConfig,
   RuntimeState,
   SavedModelSummary,

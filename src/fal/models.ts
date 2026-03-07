@@ -198,6 +198,102 @@ function summarizeSchemaNode(root: OpenApiRecord, schema: unknown, depth = 0): u
   };
 }
 
+function isStringLikeSchema(root: OpenApiRecord, schema: unknown): boolean {
+  const resolved = resolveRef(root, schema);
+  const record = asRecord(resolved);
+  if (!record) {
+    return false;
+  }
+  if (readString(record, ["type"]) === "string") {
+    return true;
+  }
+  return asArray(record.anyOf).some(item => isStringLikeSchema(root, item))
+    || asArray(record.oneOf).some(item => isStringLikeSchema(root, item));
+}
+
+function isArrayOfStrings(root: OpenApiRecord, schema: unknown): boolean {
+  const resolved = resolveRef(root, schema);
+  const record = asRecord(resolved);
+  if (!record) {
+    return false;
+  }
+  if (readString(record, ["type"]) === "array" && isStringLikeSchema(root, record.items)) {
+    return true;
+  }
+  return asArray(record.anyOf).some(item => isArrayOfStrings(root, item))
+    || asArray(record.oneOf).some(item => isArrayOfStrings(root, item));
+}
+
+function isLikelyUploadField(root: OpenApiRecord, key: string, schema: unknown): boolean {
+  const resolved = resolveRef(root, schema);
+  const record = asRecord(resolved);
+  if (!record) {
+    return false;
+  }
+
+  const name = key.toLowerCase();
+  const description = (readString(record, ["description", "title"]) ?? "").toLowerCase();
+  const looksLikeFileField = name.endsWith("_url")
+    || name.endsWith("_urls")
+    || name.includes("image")
+    || name.includes("video")
+    || name.includes("audio")
+    || description.includes("url")
+    || description.includes("image")
+    || description.includes("video")
+    || description.includes("audio")
+    || Boolean(record["x-fal"]);
+
+  if (!looksLikeFileField) {
+    return false;
+  }
+  return isStringLikeSchema(root, schema) || isArrayOfStrings(root, schema);
+}
+
+function encodePointerPart(value: string): string {
+  return value.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+function collectUploadPointerHints(
+  root: OpenApiRecord,
+  schema: unknown,
+  pathParts: string[] = [],
+  output = new Set<string>()
+): string[] {
+  const resolved = resolveRef(root, schema);
+  const record = asRecord(resolved);
+  if (!record) {
+    return [...output];
+  }
+
+  const properties = asRecord(record.properties);
+  if (properties) {
+    for (const [key, child] of Object.entries(properties)) {
+      const childPath = [...pathParts, key];
+      if (isLikelyUploadField(root, key, child)) {
+        if (isArrayOfStrings(root, child)) {
+          output.add(`/${childPath.map(encodePointerPart).join("/")}/0`);
+        } else {
+          output.add(`/${childPath.map(encodePointerPart).join("/")}`);
+        }
+      }
+      collectUploadPointerHints(root, child, childPath, output);
+    }
+  }
+
+  for (const child of asArray(record.anyOf)) {
+    collectUploadPointerHints(root, child, pathParts, output);
+  }
+  for (const child of asArray(record.oneOf)) {
+    collectUploadPointerHints(root, child, pathParts, output);
+  }
+  if (record.items) {
+    collectUploadPointerHints(root, record.items, [...pathParts, "0"], output);
+  }
+
+  return [...output];
+}
+
 function extractOpenApiSpec(record: JsonRecord): OpenApiRecord | null {
   const candidates = [
     record.openapi,
@@ -235,7 +331,8 @@ export function buildModelDetail(record: JsonRecord, schemaMode: "summary" | "op
 
     schemaSummary = {
       input: summarizeSchemaNode(openapi, requestSchema),
-      output: summarizeSchemaNode(openapi, responseSchema)
+      output: summarizeSchemaNode(openapi, responseSchema),
+      uploadPointerHints: collectUploadPointerHints(openapi, requestSchema)
     };
   }
 

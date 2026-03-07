@@ -213,6 +213,7 @@ export async function getWorkspaceDetails(runtime: RuntimeConfig, state: Persist
       status: run.status,
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
+      uploads: run.uploads ?? [],
       artifacts: run.artifacts,
       artifactIssues: run.artifactIssues ?? [],
       cost: run.cost ?? null

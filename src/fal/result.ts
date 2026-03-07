@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { ArtifactIssue, ArtifactRecord } from "../runtime.js";
+import { downloadUrlToBuffer } from "./transfer.js";
 
 type JsonRecord = Record<string, unknown>;
 type ArtifactCandidate = {
@@ -231,13 +232,9 @@ export async function materializeArtifactsToWorkspace(
 
     try {
       if (item.sourceKind === "remote") {
-        const response = await fetch(item.sourceUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to download artifact: ${response.status} ${response.statusText}`);
-        }
-        const contentType = response.headers.get("content-type");
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
+        const downloaded = await downloadUrlToBuffer(item.sourceUrl);
+        const contentType = downloaded.contentType ?? null;
+        const buffer = downloaded.buffer;
         const suffix = extensionFromUrl(item.sourceUrl) || extensionFromContentType(contentType);
         const localPath = path.join(artifactsDir, fileNameForArtifact(artifacts.length, item.pointer, suffix));
         await writeFile(localPath, buffer);

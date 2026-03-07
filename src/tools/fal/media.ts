@@ -97,7 +97,7 @@ export function registerFalMediaTool(context: FalToolContext): void {
     "fal_media",
     {
       title: "fal media postprocess",
-      description: "Typed local media operations for files from fal workspaces or other local paths, including inspect, image conversion, resizing, video conversion, trim, concat, frame extraction, audio mux, and audio conversion.",
+      description: "Inspect or transform local media files. Prefer workspace-relative paths with workspaceId, and omit outputPath to write the result back into that workspace.",
       inputSchema: mediaSchema
     },
     async input => {

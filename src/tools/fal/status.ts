@@ -32,7 +32,7 @@ export function registerFalStatusTool(context: FalToolContext): void {
     "fal_status",
     {
       title: "fal MCP status",
-      description: "Read runtime status for fal MCP, including API key state, setup-web state, workspace root, saved cursors, and workspace summary.",
+      description: "Read config, auth, capability, setup-web, media, saved cursor, and workspace state before using other fal tools.",
       inputSchema: z.object({})
     },
     async () => {

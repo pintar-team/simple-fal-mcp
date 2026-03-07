@@ -31,7 +31,7 @@ export function registerFalModelTool(context: FalToolContext): void {
     "fal_model",
     {
       title: "fal model discovery",
-      description: "Search fal models, continue the saved cursor, fetch one model with live OpenAPI payloads, or inspect pricing and cost estimates.",
+      description: "Find fal endpoints, continue the saved search cursor, inspect one model, or query price and estimate data. Use schemaMode=summary first; request raw OpenAPI only when needed.",
       inputSchema: searchActionSchema
     },
     async input => {

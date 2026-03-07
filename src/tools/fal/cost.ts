@@ -76,7 +76,7 @@ export function registerFalCostTool(context: FalToolContext): void {
     "fal_cost",
     {
       title: "fal pricing and cost",
-      description: "Query live model pricing, estimate costs, inspect usage buckets, or combine request history and usage into a request-linked cost report.",
+      description: "Use price for live unit pricing, estimate for planned calls, request for one saved run or request, and usage only when an admin key is configured.",
       inputSchema: costSchema
     },
     async input => {

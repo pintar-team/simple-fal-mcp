@@ -3,8 +3,9 @@ import path from "node:path";
 
 import { z } from "zod";
 
-import { createConfiguredFalClient, uploadLocalFile } from "../../fal/client.js";
-import { materializeArtifactsToWorkspace, setJsonPointer } from "../../fal/result.js";
+import { createConfiguredFalClient } from "../../fal/client.js";
+import { materializeRunResult } from "../../fal/run-result.js";
+import { prepareInputUploads } from "../../fal/uploads.js";
 import { createRunId, ensureWorkspace, saveRunRecord } from "../../fal/workspaces.js";
 import { getFalApiKey } from "../../runtime.js";
 import { writeJsonFile } from "../../runtime/files.js";
@@ -33,12 +34,14 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+const SAFE_COMPLETE_WAIT_MS = 95_000;
+
 export function registerFalRunTool(context: FalToolContext): void {
   context.server.registerTool(
     "fal_run",
     {
       title: "run a fal model",
-      description: "Execute a fal model endpoint with raw input, optional local-file uploads, and a temporary local workspace for saved request payloads and output artifacts.",
+      description: "Execute one fal endpoint. Use uploadFiles with JSON pointer fields from fal_model. wait=submit returns immediately; wait=complete waits briefly, then returns a recoverable in-progress handle if needed.",
       inputSchema: runSchema
     },
     async input => {
@@ -47,12 +50,6 @@ export function registerFalRunTool(context: FalToolContext): void {
       const apiKey = getFalApiKey(context.getAuth());
       if (!apiKey) {
         throw new Error("fal_run requires FAL_KEY. Configure it first.");
-      }
-
-      const preparedInput = structuredClone(input.input);
-      for (const upload of input.uploadFiles ?? []) {
-        const uploadedUrl = await uploadLocalFile(apiKey, runtime, upload.localPath);
-        setJsonPointer(preparedInput, upload.inputPath, uploadedUrl);
       }
 
       const workspace = await ensureWorkspace(
@@ -70,14 +67,6 @@ export function registerFalRunTool(context: FalToolContext): void {
       const responsePath = path.join(runDirectory, "response.json");
       const artifactsDir = path.join(runDirectory, "artifacts");
 
-      await writeJsonFile(inputPath, {
-        endpointId: input.endpointId,
-        mode: input.mode ?? "queue",
-        wait: input.wait ?? "complete",
-        input: preparedInput,
-        uploadFiles: input.uploadFiles ?? []
-      });
-
       let record: RunRecord = {
         runId,
         workspaceId: workspace.entry.workspaceId,
@@ -90,46 +79,76 @@ export function registerFalRunTool(context: FalToolContext): void {
         statusPath,
         responsePath,
         artifactsDir,
-        artifacts: []
+        artifacts: [],
+        uploads: []
       };
       nextState = await saveRunRecord(runtime, nextState, record);
       await context.savePersistedState(nextState, "fal_run_create");
+
+      let preparedInput = structuredClone(input.input);
+      let inputForStorage: Record<string, unknown> = structuredClone(input.input);
+      try {
+        const prepared = await prepareInputUploads(apiKey, runtime, preparedInput, input.uploadFiles ?? []);
+        preparedInput = prepared.preparedInput;
+        inputForStorage = prepared.sanitizedInput;
+        record = {
+          ...record,
+          updatedAt: new Date().toISOString(),
+          uploads: prepared.uploads
+        };
+      } catch (error) {
+        const uploads = typeof error === "object" && error !== null && "uploads" in error
+          ? (error as { uploads: NonNullable<RunRecord["uploads"]> }).uploads
+          : [];
+        record = {
+          ...record,
+          updatedAt: new Date().toISOString(),
+          status: "FAILED",
+          uploads,
+          error: error instanceof Error ? error.message : String(error)
+        };
+        nextState = await saveRunRecord(runtime, nextState, record);
+        await context.savePersistedState(nextState, "fal_run_upload_failed");
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+
+      await writeJsonFile(inputPath, {
+        endpointId: input.endpointId,
+        mode: input.mode ?? "queue",
+        wait: input.wait ?? "complete",
+        input: inputForStorage,
+        uploadFiles: record.uploads ?? []
+      });
+      nextState = await saveRunRecord(runtime, nextState, record);
+      await context.savePersistedState(nextState, "fal_run_input_ready");
 
       const falClient = createConfiguredFalClient(apiKey);
 
       if (input.mode === "sync") {
         const result = await falClient.run(input.endpointId, { input: preparedInput });
-        await writeJsonFile(responsePath, result);
-        const materialized = await materializeArtifactsToWorkspace(
-          result.data,
-          artifactsDir,
-          runtime.defaults.artifactDownloadLimit,
-          runtime.defaults.downloadOutputs
+        const finalized = await materializeRunResult(
+          runtime,
+          nextState,
+          {
+            ...record,
+            requestId: result.requestId
+          },
+          result
         );
-        record = {
-          ...record,
-          requestId: result.requestId,
-          updatedAt: new Date().toISOString(),
-          status: "COMPLETED",
-          artifacts: materialized.artifacts,
-          artifactIssues: materialized.artifactIssues
-        };
-        nextState = await saveRunRecord(runtime, nextState, record);
+        nextState = finalized.nextState;
         await context.savePersistedState(nextState, "fal_run_sync_complete");
         return okResponse({
           ok: true,
           mode: "sync",
           status: "COMPLETED",
-          workspaceId: record.workspaceId,
-          runId: record.runId,
-          requestId: record.requestId ?? null,
-          artifacts: materialized.artifacts,
-          artifactIssues: materialized.artifactIssues,
-          rawResultPath: responsePath,
-          result: {
-            ...result,
-            data: materialized.publicPayload
-          }
+          workspaceId: finalized.updatedRun.workspaceId,
+          runId: finalized.updatedRun.runId,
+          requestId: finalized.updatedRun.requestId ?? null,
+          uploads: finalized.updatedRun.uploads ?? [],
+          artifacts: finalized.artifacts,
+          artifactIssues: finalized.artifactIssues,
+          rawResultPath: finalized.rawResultPath,
+          result: finalized.publicResult
         });
       }
 
@@ -157,12 +176,14 @@ export function registerFalRunTool(context: FalToolContext): void {
           workspaceId: record.workspaceId,
           runId: record.runId,
           requestId: enqueued.request_id,
+          uploads: record.uploads ?? [],
           queue: enqueued
         });
       }
 
-      const waitMs = input.waitMs ?? runtime.defaults.waitMs;
-      const deadline = Date.now() + waitMs;
+      const requestedWaitMs = input.waitMs ?? runtime.defaults.waitMs;
+      const effectiveWaitMs = Math.min(requestedWaitMs, SAFE_COMPLETE_WAIT_MS);
+      const deadline = Date.now() + effectiveWaitMs;
       let latestStatus: unknown = enqueued;
 
       while (Date.now() < deadline) {
@@ -183,21 +204,8 @@ export function registerFalRunTool(context: FalToolContext): void {
           const result = await falClient.queue.result(input.endpointId, {
             requestId: enqueued.request_id
           });
-          await writeJsonFile(responsePath, result);
-          const materialized = await materializeArtifactsToWorkspace(
-            result.data,
-            artifactsDir,
-            runtime.defaults.artifactDownloadLimit,
-            runtime.defaults.downloadOutputs
-          );
-          record = {
-            ...record,
-            updatedAt: new Date().toISOString(),
-            status: "COMPLETED",
-            artifacts: materialized.artifacts,
-            artifactIssues: materialized.artifactIssues
-          };
-          nextState = await saveRunRecord(runtime, nextState, record);
+          const finalized = await materializeRunResult(runtime, nextState, record, result);
+          nextState = finalized.nextState;
           await context.savePersistedState(nextState, "fal_run_complete");
           return okResponse({
             ok: true,
@@ -206,27 +214,29 @@ export function registerFalRunTool(context: FalToolContext): void {
             workspaceId: record.workspaceId,
             runId: record.runId,
             requestId: enqueued.request_id,
-            artifacts: materialized.artifacts,
-            artifactIssues: materialized.artifactIssues,
-            rawResultPath: responsePath,
-            result: {
-              ...result,
-              data: materialized.publicPayload
-            }
+            uploads: record.uploads ?? [],
+            artifacts: finalized.artifacts,
+            artifactIssues: finalized.artifactIssues,
+            rawResultPath: finalized.rawResultPath,
+            result: finalized.publicResult
           });
         }
         await sleep(runtime.defaults.pollIntervalMs);
       }
 
-      await writeFile(path.join(runDirectory, "timeout.txt"), `Timed out after ${waitMs}ms\n`);
+      await writeFile(path.join(runDirectory, "timeout.txt"), `Timed out after ${effectiveWaitMs}ms\n`);
       return okResponse({
         ok: true,
         mode: "queue",
-        status: "PENDING",
+        status: "IN_PROGRESS",
         workspaceId: record.workspaceId,
         runId: record.runId,
         requestId: enqueued.request_id,
-        latestStatus
+        waitRequestedMs: requestedWaitMs,
+        waitCappedMs: effectiveWaitMs,
+        uploads: record.uploads ?? [],
+        latestStatus,
+        hint: `Run is still in progress. Call fal_request with action=result and runId=${record.runId}.`
       });
     }
   );

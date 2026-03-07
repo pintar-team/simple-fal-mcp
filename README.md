@@ -25,7 +25,7 @@ Local media post-process is also available through `fal_media`. Image work uses 
 - `fal_model`
   - `action: "search"` searches live fal models and saves the next cursor.
   - `action: "next"` continues the saved model cursor.
-  - `action: "get"` fetches one or more model records and can include live OpenAPI.
+  - `action: "get"` fetches one or more model records and can include live OpenAPI. Summary mode also surfaces likely upload JSON pointers.
   - `action: "pricing"` fetches unit pricing for endpoints.
   - `action: "estimate"` estimates cost for a set of endpoint calls.
 - `fal_cost`
@@ -34,10 +34,11 @@ Local media post-process is also available through `fal_media`. Image work uses 
   - `action: "usage" | "usage_next"` returns saved usage buckets and summary data from fal usage APIs.
   - `action: "request"` combines request history, live pricing, inferred quantity, and usage-window lookup for one saved run or request ID.
 - `fal_run`
-  - Run a model endpoint with raw input, optional local-file uploads, and a local temp workspace.
+  - Run a model endpoint with raw input, optional local-file uploads, and a local temp workspace. Long queue runs return a recoverable in-progress payload instead of waiting indefinitely in one tool call.
 - `fal_request`
   - `action: "status"` reads queue status.
   - `action: "result"` fetches queue results and downloads artifacts into the saved workspace when possible.
+  - `action: "materialize"` retries local artifact download for a saved completed run.
   - `action: "cancel"` cancels a queued request.
   - `action: "history"` lists recent platform requests by endpoint and saves the next cursor.
   - `action: "history_next"` continues the saved request-history cursor.
@@ -105,6 +106,7 @@ Search fal for a fast image-to-video model and show me the schema summary.
 That should lead to:
 - `fal_model` with `action: "search"`
 - then `fal_model` with `action: "get"` and `schemaMode: "summary"` or `"both"`
+- for file-based models, reuse the returned upload pointer hints like `/start_image_url` or `/image_urls/0`
 
 ### Run a model
 
@@ -117,6 +119,7 @@ Run fal-ai/veo3/image-to-video with this local image and save outputs to a temp 
 That should lead to:
 - `fal_run`
 - optional `uploadFiles` mappings that replace JSON-pointer input paths with uploaded fal URLs
+- if the inline wait window is exceeded, use the returned `runId` with `fal_request`
 
 ### Check pricing or cost
 
@@ -141,6 +144,7 @@ Check the status of my last fal run and get the result if it is done.
 
 That should lead to:
 - `fal_request` with `runId` or `requestId`
+- if the provider result is ready but local files are missing, use `fal_request` with `action: "materialize"`
 
 ### Keep or clean artifacts
 
@@ -223,4 +227,6 @@ bun run start
 
 - Model discovery and schema inspection use fal’s live platform APIs rather than a hardcoded local catalog.
 - `fal_run` defaults to queue mode and saves request state locally so later tools can recover by `runId`.
+- local uploads are resolved before submit and recorded in run metadata, with inline-data fallback for smaller files when storage upload fails.
+- provider success and local artifact download are treated separately, so a completed run stays completed even when local mirroring needs a retry.
 - The setup page does not expose the stored fal key or admin key back to the browser after either has been saved.

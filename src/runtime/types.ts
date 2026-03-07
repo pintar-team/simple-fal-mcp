@@ -134,6 +134,17 @@ export type ArtifactIssue = {
   message: string;
 };
 
+export type RunUploadRecord = {
+  inputPath: string;
+  localPath: string;
+  status: "uploaded" | "embedded_data" | "failed";
+  resolvedValueKind?: "remote_url" | "inline_data";
+  resolvedValuePreview?: string;
+  contentType?: string;
+  size?: number;
+  error?: string;
+};
+
 export type RunRecord = {
   runId: string;
   workspaceId: string;
@@ -149,6 +160,7 @@ export type RunRecord = {
   artifactsDir?: string;
   artifacts: ArtifactRecord[];
   artifactIssues?: ArtifactIssue[];
+  uploads?: RunUploadRecord[];
   cost?: {
     updatedAt: string;
     price?: {

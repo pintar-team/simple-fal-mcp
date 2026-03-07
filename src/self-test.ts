@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import http from "node:http";
 
 import sharp from "sharp";
 
@@ -108,7 +109,17 @@ function testOpenApiSummary(): void {
                     required: ["prompt"],
                     properties: {
                       prompt: { type: "string", description: "Prompt" },
-                      duration: { type: "integer" }
+                      duration: { type: "integer" },
+                      start_image_url: {
+                        type: "string",
+                        description: "Image to use as the first frame"
+                      },
+                      image_urls: {
+                        type: "array",
+                        items: {
+                          type: "string"
+                        }
+                      }
                     }
                   }
                 }
@@ -141,6 +152,10 @@ function testOpenApiSummary(): void {
   if (!(detail.schemaSummary as Record<string, unknown>)?.input) {
     throw new Error("OpenAPI schema summary did not include input");
   }
+  const uploadPointerHints = (detail.schemaSummary as Record<string, unknown>)?.uploadPointerHints;
+  if (!Array.isArray(uploadPointerHints) || !uploadPointerHints.includes("/start_image_url") || !uploadPointerHints.includes("/image_urls/0")) {
+    throw new Error("OpenAPI schema summary did not include upload pointer hints");
+  }
 }
 
 async function testInlineArtifactMaterialization(): Promise<void> {
@@ -167,6 +182,56 @@ async function testInlineArtifactMaterialization(): Promise<void> {
   const firstUrl = images?.[0]?.url;
   if (typeof firstUrl !== "string" || firstUrl.startsWith("data:")) {
     throw new Error("public payload still exposed inline data");
+  }
+}
+
+async function testRemoteArtifactMaterialization(): Promise<void> {
+  const rootDir = path.join(os.tmpdir(), `simple-fal-mcp-remote-artifact-test-${Date.now()}`);
+  const artifactsDir = path.join(rootDir, "artifacts");
+  const payloadBytes = Buffer.from("remote-artifact-bytes");
+  const server = http.createServer((req, res) => {
+    if (req.url === "/artifact.png") {
+      res.writeHead(200, { "Content-Type": "image/png" });
+      res.end(payloadBytes);
+      return;
+    }
+    res.writeHead(404);
+    res.end("not found");
+  });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("EPERM")) {
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("failed to determine local test server address");
+    }
+    const payload = {
+      image: {
+        url: `http://127.0.0.1:${address.port}/artifact.png`
+      }
+    };
+    const materialized = await materializeArtifactsToWorkspace(payload, artifactsDir, 1, true);
+    if (materialized.artifacts.length !== 1) {
+      throw new Error("remote artifact was not materialized");
+    }
+    const artifact = materialized.artifacts[0]!;
+    if (!existsSync(artifact.localPath)) {
+      throw new Error("remote artifact file was not written");
+    }
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
   }
 }
 
@@ -271,6 +336,7 @@ async function main(): Promise<void> {
   await testWorkspaceRoundTrip();
   testOpenApiSummary();
   await testInlineArtifactMaterialization();
+  await testRemoteArtifactMaterialization();
   testCostParsing();
   const mediaCheck = await testMediaHelpers();
   console.log(JSON.stringify({
@@ -280,6 +346,7 @@ async function main(): Promise<void> {
       "workspace_round_trip",
       "openapi_summary",
       "inline_artifact_materialization",
+      "remote_artifact_materialization",
       "cost_parsing",
       mediaCheck
     ]

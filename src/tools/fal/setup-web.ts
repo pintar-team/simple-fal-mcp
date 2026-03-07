@@ -61,7 +61,7 @@ export function registerFalSetupWebTools(context: FalToolContext): void {
     "fal_setup_web",
     {
       title: "fal setup web control",
-      description: "Manage the local fal setup web UI with one action-based tool: check status, start it on demand, or stop it when no longer needed.",
+      description: "Use the local setup panel on demand. action=status checks it, action=start opens it, and action=stop closes it.",
       inputSchema: setupWebActionSchema
     },
     async input => handleSetupWebAction(context, input.action)

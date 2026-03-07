@@ -14,7 +14,7 @@ export function registerFalWorkspaceTool(context: FalToolContext): void {
     "fal_workspace",
     {
       title: "fal workspace manager",
-      description: "Inspect or clean local fal workspaces that hold temporary request payloads and downloaded output artifacts.",
+      description: "Inspect saved workspaces and runs, including upload and artifact issues, or delete and clean old temporary workspaces.",
       inputSchema: workspaceSchema
     },
     async input => {
