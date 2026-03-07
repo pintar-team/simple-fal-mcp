@@ -1,0 +1,66 @@
+{
+  "name": "simple-fal-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol (MCP) server for fal.ai model discovery, execution, and ephemeral local workspaces.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pintar-team/simple-fal-mcp.git"
+  },
+  "homepage": "https://github.com/pintar-team/simple-fal-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/pintar-team/simple-fal-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "codex",
+    "claude",
+    "claude-code",
+    "ai-agent",
+    "fal",
+    "fal-ai",
+    "generative-media",
+    "image-generation",
+    "video-generation"
+  ],
+  "type": "module",
+  "packageManager": "bun@1.3.9",
+  "files": [
+    "build",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "bun run typecheck && bunx tsc",
+    "dev": "bun run build && node build/index.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "prepack": "bun run lint && bun run build",
+    "self-test": "bun run build && node build/self-test.js",
+    "start": "bun run build && node build/index.js"
+  },
+  "dependencies": {
+    "@fal-ai/client": "^1.7.2",
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "sharp": "^0.34.4",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@types/node": "^22.12.0",
+    "eslint": "^9.35.0",
+    "globals": "^16.4.0",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.43.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "bin": {
+    "simple-fal-mcp": "build/index.js"
+  }
+}

@@ -1,0 +1,7 @@
+export const DEFAULT_SETUP_HOST = "127.0.0.1";
+export const DEFAULT_SETUP_PORT = 20143;
+export const DEFAULT_WAIT_MS = 90_000;
+export const DEFAULT_POLL_INTERVAL_MS = 1_500;
+export const DEFAULT_MODEL_SEARCH_LIMIT = 12;
+export const DEFAULT_ARTIFACT_DOWNLOAD_LIMIT = 8;
+export const DEFAULT_OBJECT_TTL_SECONDS = 7 * 24 * 60 * 60;
