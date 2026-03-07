@@ -132,6 +132,49 @@ export async function concatVideos(
   }
 }
 
+export async function imageSequenceToVideo(
+  inputPaths: string[],
+  outputPath: string,
+  options: {
+    format: VideoOutputFormat;
+    fps?: number;
+    secondsPerImage?: number;
+    videoCodec?: VideoCodec;
+  }
+): Promise<void> {
+  const listPath = path.join(os.tmpdir(), `simple-fal-mcp-image-sequence-${Date.now()}.txt`);
+  const secondsPerImage = options.secondsPerImage ?? 1.5;
+  const repeatedLast = inputPaths[inputPaths.length - 1];
+  const listContent = [
+    ...inputPaths.flatMap(item => [
+      `file '${item.replace(/'/g, "'\\''")}'`,
+      `duration ${secondsPerImage}`
+    ]),
+    `file '${repeatedLast?.replace(/'/g, "'\\''") ?? ""}'`
+  ].join("\n");
+
+  await writeFile(listPath, `${listContent}\n`, "utf8");
+  try {
+    await runCommand("ffmpeg", [
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      listPath,
+      "-vf",
+      `fps=${options.fps ?? 24},format=yuv420p`,
+      ...mapVideoCodec(options.videoCodec, options.format),
+      "-an",
+      ...(options.format === "mp4" ? ["-movflags", "+faststart"] : []),
+      outputPath
+    ]);
+  } finally {
+    await unlink(listPath).catch(() => {});
+  }
+}
+
 export async function extractFrame(
   inputPath: string,
   outputPath: string,

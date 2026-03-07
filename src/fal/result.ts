@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { ArtifactIssue, ArtifactRecord } from "../runtime.js";
+import { addStorageNetworkHint, formatErrorWithCauses } from "./diagnostics.js";
 import { downloadUrlToBuffer } from "./transfer.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -266,7 +267,7 @@ export async function materializeArtifactsToWorkspace(
         sourceKind: item.sourceKind,
         sourceUrl: item.sourceKind === "remote" ? item.sourceUrl : undefined,
         severity: "error",
-        message: error instanceof Error ? error.message : String(error)
+        message: addStorageNetworkHint(formatErrorWithCauses(error))
       });
     }
   }

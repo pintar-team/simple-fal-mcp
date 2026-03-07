@@ -1,8 +1,9 @@
-import { createFalClient } from "@fal-ai/client";
+import { fal, type FalClient } from "@fal-ai/client";
 
 import { createFetchWithDuplex } from "./fetch.js";
 
 const REST_BASE_URL = "https://api.fal.ai/v1";
+let configuredFetch: typeof fetch | undefined;
 
 export class FalApiError extends Error {
   readonly status: number;
@@ -60,7 +61,7 @@ export async function falApiRequest<T>(pathname: string, options: RequestOptions
   if (options.body !== undefined) {
     init.body = JSON.stringify(options.body);
   }
-  const response = await createFetchWithDuplex(fetch)(buildUrl(pathname, options.query), init);
+  const response = await getFalFetch()(buildUrl(pathname, options.query), init);
   if (!response.ok) {
     const body = await response.text().catch(() => "");
     throw new FalApiError(response.status, response.statusText, body);
@@ -71,9 +72,21 @@ export async function falApiRequest<T>(pathname: string, options: RequestOptions
   return await response.json() as T;
 }
 
-export function createConfiguredFalClient(apiKey: string) {
-  return createFalClient({
+function getFalFetch(): typeof fetch {
+  if (!configuredFetch) {
+    configuredFetch = createFetchWithDuplex(fetch);
+    globalThis.fetch = configuredFetch;
+  }
+  return configuredFetch;
+}
+
+export function createConfiguredFalClient(apiKey: string): FalClient {
+  const nextFetch = getFalFetch();
+  // The SDK client is a shared singleton. Always include credentials when
+  // reconfiguring it, otherwise later calls can silently clear auth state.
+  fal.config({
     credentials: apiKey,
-    fetch: createFetchWithDuplex(fetch)
+    fetch: nextFetch
   });
+  return fal;
 }

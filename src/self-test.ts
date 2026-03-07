@@ -5,13 +5,15 @@ import { mkdir } from "node:fs/promises";
 import http from "node:http";
 
 import sharp from "sharp";
+import { fal } from "@fal-ai/client";
 
 import { inferUsageQuantity, parseUsageResponse } from "./fal/cost.js";
+import { createConfiguredFalClient } from "./fal/client.js";
 import { buildModelDetail } from "./fal/models.js";
 import { isCommandAvailable, runCommand } from "./media/command.js";
 import { inspectLocalFile } from "./media/inspect.js";
 import { resizeImage } from "./media/images.js";
-import { extractFrame } from "./media/video.js";
+import { extractFrame, imageSequenceToVideo } from "./media/video.js";
 import { materializeArtifactsToWorkspace } from "./fal/result.js";
 import { createRunId, ensureWorkspace, getWorkspaceDetails, saveRunRecord } from "./fal/workspaces.js";
 import { writeJsonFile } from "./runtime/files.js";
@@ -40,6 +42,35 @@ function testSetupPageSecretHandling(): void {
   }
   if (html.includes("super-secret-admin-key")) {
     throw new Error("setup page leaked the stored admin API key");
+  }
+}
+
+function testFalClientRetainsCredentialsAcrossCalls(): void {
+  const originalConfig = fal.config.bind(fal);
+  const seen: Array<{ credentials?: unknown; fetch?: unknown }> = [];
+
+  (fal as { config: (config: Record<string, unknown>) => void }).config = (config: Record<string, unknown>) => {
+    seen.push({
+      credentials: config.credentials,
+      fetch: config.fetch
+    });
+  };
+
+  try {
+    createConfiguredFalClient("first-key");
+    createConfiguredFalClient("first-key");
+  } finally {
+    (fal as { config: typeof originalConfig }).config = originalConfig;
+  }
+
+  if (seen.length !== 2) {
+    throw new Error("fal client config regression test did not observe both calls");
+  }
+  if (seen.some(entry => entry.credentials !== "first-key")) {
+    throw new Error("fal client reconfiguration dropped credentials");
+  }
+  if (seen.some(entry => typeof entry.fetch !== "function")) {
+    throw new Error("fal client reconfiguration did not preserve fetch");
   }
 }
 
@@ -284,6 +315,16 @@ async function testMediaHelpers(): Promise<string> {
     throw new Error("ffmpeg frame extraction did not produce an output file");
   }
 
+  const sequenceVideo = path.join(rootDir, "sequence.mp4");
+  await imageSequenceToVideo([sourceImage, sourceImage], sequenceVideo, {
+    format: "mp4",
+    secondsPerImage: 0.5,
+    fps: 12
+  });
+  if (!existsSync(sequenceVideo)) {
+    throw new Error("image sequence helper did not produce an output file");
+  }
+
   return "media_helpers";
 }
 
@@ -333,6 +374,7 @@ function testCostParsing(): void {
 
 async function main(): Promise<void> {
   testSetupPageSecretHandling();
+  testFalClientRetainsCredentialsAcrossCalls();
   await testWorkspaceRoundTrip();
   testOpenApiSummary();
   await testInlineArtifactMaterialization();
@@ -343,6 +385,7 @@ async function main(): Promise<void> {
     ok: true,
     checks: [
       "setup_page_secret_handling",
+      "fal_client_credentials_persist",
       "workspace_round_trip",
       "openapi_summary",
       "inline_artifact_materialization",

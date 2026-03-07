@@ -34,9 +34,12 @@ Local media post-process is also available through `fal_media`. Image work uses 
   - `action: "usage" | "usage_next"` returns saved usage buckets and summary data from fal usage APIs.
   - `action: "request"` combines request history, live pricing, inferred quantity, and usage-window lookup for one saved run or request ID.
 - `fal_run`
-  - Run a model endpoint with raw input, optional local-file uploads, and a local temp workspace. Long queue runs return a recoverable in-progress payload instead of waiting indefinitely in one tool call.
+  - Submit a model run with raw input, optional local-file uploads, and a local temp workspace.
+  - Default `wait` is `submit`, so the tool returns `runId` and `requestId` immediately.
+  - Use `wait: "complete"` only when you explicitly want one bounded inline wait.
 - `fal_request`
   - `action: "status"` reads queue status.
+  - `action: "wait"` polls a queue request until completion, terminal failure, or timeout.
   - `action: "result"` fetches queue results and downloads artifacts into the saved workspace when possible.
   - `action: "materialize"` retries local artifact download for a saved completed run.
   - `action: "cancel"` cancels a queued request.
@@ -47,7 +50,7 @@ Local media post-process is also available through `fal_media`. Image work uses 
 - `fal_media`
   - `action: "inspect"` returns local image/video/audio metadata.
   - `action: "image_convert" | "image_resize"` handles common image transforms with `sharp`.
-  - `action: "video_convert" | "video_trim" | "video_concat" | "extract_frame" | "mux_audio"` handles common video post-process with `ffmpeg`.
+  - `action: "video_convert" | "video_trim" | "video_concat" | "image_sequence_to_video" | "extract_frame" | "mux_audio"` handles common video post-process with `ffmpeg`.
   - `action: "audio_convert" | "audio_concat"` handles common audio conversions and glue steps with `ffmpeg`.
 
 ## Install
@@ -119,7 +122,8 @@ Run fal-ai/veo3/image-to-video with this local image and save outputs to a temp 
 That should lead to:
 - `fal_run`
 - optional `uploadFiles` mappings that replace JSON-pointer input paths with uploaded fal URLs
-- if the inline wait window is exceeded, use the returned `runId` with `fal_request`
+- by default, keep the submit response and follow with `fal_request`
+- if you set `sync_mode: true` inside model input, fal will not show output data in request history previews
 
 ### Check pricing or cost
 
@@ -143,7 +147,8 @@ Check the status of my last fal run and get the result if it is done.
 ```
 
 That should lead to:
-- `fal_request` with `runId` or `requestId`
+- `fal_request` with `action: "wait"` and a `runId` or `requestId`
+- optionally `fal_request` with `action: "result"` once it is finished
 - if the provider result is ready but local files are missing, use `fal_request` with `action: "materialize"`
 
 ### Keep or clean artifacts
@@ -226,7 +231,7 @@ bun run start
 ## Notes
 
 - Model discovery and schema inspection use fal’s live platform APIs rather than a hardcoded local catalog.
-- `fal_run` defaults to queue mode and saves request state locally so later tools can recover by `runId`.
-- local uploads are resolved before submit and recorded in run metadata, with inline-data fallback for smaller files when storage upload fails.
+- `fal_run` defaults to queue mode with `wait: "submit"` and saves request state locally so later tools can recover by `runId`.
+- local uploads are resolved before submit and recorded in run metadata. Upload failure is treated as a real error instead of silently switching to inline data.
 - provider success and local artifact download are treated separately, so a completed run stays completed even when local mirroring needs a retry.
 - The setup page does not expose the stored fal key or admin key back to the browser after either has been saved.

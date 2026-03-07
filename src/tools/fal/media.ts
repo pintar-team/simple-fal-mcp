@@ -11,6 +11,7 @@ import {
   convertAudio,
   convertVideo,
   extractFrame,
+  imageSequenceToVideo,
   muxAudioTrack,
   trimVideo,
   type AudioCodec,
@@ -36,6 +37,7 @@ const mediaSchema = z.object({
     "video_convert",
     "video_trim",
     "video_concat",
+    "image_sequence_to_video",
     "extract_frame",
     "mux_audio",
     "audio_convert",
@@ -62,6 +64,7 @@ const mediaSchema = z.object({
   durationSeconds: z.number().positive().optional(),
   timeSeconds: z.number().nonnegative().optional(),
   fps: z.number().positive().optional(),
+  imageDurationSeconds: z.number().positive().optional(),
   videoCodec: z.enum(videoCodecs).optional(),
   audioCodec: z.enum(audioCodecs).optional()
 });
@@ -97,7 +100,7 @@ export function registerFalMediaTool(context: FalToolContext): void {
     "fal_media",
     {
       title: "fal media postprocess",
-      description: "Inspect or transform local media files. Prefer workspace-relative paths with workspaceId, and omit outputPath to write the result back into that workspace.",
+      description: "Inspect or transform local media files. Prefer workspace-relative paths with workspaceId, and omit outputPath to write results back into that workspace.",
       inputSchema: mediaSchema
     },
     async input => {
@@ -256,6 +259,33 @@ export function registerFalMediaTool(context: FalToolContext): void {
         return okResponse({
           ok: true,
           action: "video_concat",
+          inputPaths,
+          outputPath: output.outputPath,
+          workspaceId: output.workspaceId ?? null,
+          inspection: await inspectLocalFile(output.outputPath)
+        });
+      }
+
+      if (input.action === "image_sequence_to_video") {
+        const inputPaths = requireAtLeastTwo(input.inputPaths, "inputPaths")
+          .map(item => resolveInputPath(runtime, item, input.workspaceId));
+        const format = (input.format as VideoOutputFormat | undefined) ?? "mp4";
+        const output = await persistWorkspaceState({
+          outputPath: input.outputPath,
+          workspaceId: input.workspaceId,
+          workspaceLabel: input.workspaceLabel,
+          baseName: "image-sequence-video",
+          extension: format
+        });
+        await imageSequenceToVideo(inputPaths, output.outputPath, {
+          format,
+          fps: input.fps,
+          secondsPerImage: input.imageDurationSeconds ?? input.durationSeconds,
+          videoCodec: input.videoCodec as VideoCodec | undefined
+        });
+        return okResponse({
+          ok: true,
+          action: "image_sequence_to_video",
           inputPaths,
           outputPath: output.outputPath,
           workspaceId: output.workspaceId ?? null,

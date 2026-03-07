@@ -1,12 +1,10 @@
-import { basename, extname } from "node:path";
+import { extname } from "node:path";
 import { readFile } from "node:fs/promises";
 
 import type { RunUploadRecord, RuntimeConfig } from "../runtime.js";
-import { falApiRequest } from "./client.js";
-import { uploadBufferToUrl } from "./transfer.js";
+import { createConfiguredFalClient } from "./client.js";
+import { addStorageNetworkHint, formatErrorWithCauses } from "./diagnostics.js";
 import { setJsonPointer } from "./result.js";
-
-const INLINE_DATA_FALLBACK_LIMIT = 8 * 1024 * 1024;
 
 type UploadRequest = {
   inputPath: string;
@@ -22,11 +20,6 @@ class PreparedUploadError extends Error {
     this.uploads = uploads;
   }
 }
-
-type InitiatedUpload = {
-  file_url: string;
-  upload_url: string;
-};
 
 function guessContentType(localPath: string): string {
   const ext = extname(localPath).toLowerCase();
@@ -55,16 +48,8 @@ function guessContentType(localPath: string): string {
   }
 }
 
-function buildInlineDataUrl(buffer: Buffer, contentType: string): string {
-  return `data:${contentType};base64,${buffer.toString("base64")}`;
-}
-
-function previewResolvedValue(kind: "remote_url" | "inline_data", value: string): string {
-  if (kind === "remote_url") {
-    return value;
-  }
-  const prefix = value.slice(0, Math.min(64, value.indexOf(",") > 0 ? value.indexOf(",") : 64));
-  return `${prefix},...`;
+function previewResolvedValue(value: string): string {
+  return value;
 }
 
 function sanitizeInputForStorage(value: unknown): unknown {
@@ -82,33 +67,16 @@ function sanitizeInputForStorage(value: unknown): unknown {
   return value;
 }
 
-async function initiateUpload(
-  apiKey: string,
-  runtime: RuntimeConfig,
-  localPath: string,
-  contentType: string
-): Promise<InitiatedUpload> {
-  return await falApiRequest<InitiatedUpload>("storage/upload/initiate", {
-    apiKey,
-    query: {
-      storage_type: "fal-cdn-v3"
-    },
-    headers: {
-      "X-Fal-Object-Lifecycle": JSON.stringify({
-        expiration_duration_seconds: runtime.defaults.objectTtlSeconds,
-        allow_io_storage: true
-      })
-    },
-    body: {
-      content_type: contentType,
-      file_name: basename(localPath)
-    }
-  });
+function toExactArrayBuffer(buffer: Buffer): ArrayBuffer {
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength
+  ) as ArrayBuffer;
 }
 
 async function resolveUpload(
   apiKey: string,
-  runtime: RuntimeConfig,
+  _runtime: RuntimeConfig,
   request: UploadRequest
 ): Promise<{ value: string; record: RunUploadRecord }> {
   const contentType = guessContentType(request.localPath);
@@ -130,38 +98,25 @@ async function resolveUpload(
   }
 
   try {
-    const initiated = await initiateUpload(apiKey, runtime, request.localPath, contentType);
-    await uploadBufferToUrl(initiated.upload_url, buffer, contentType);
+    const client = createConfiguredFalClient(apiKey);
+    const file = new File([toExactArrayBuffer(buffer)], request.localPath.split(/[\\/]/).pop() ?? "upload.bin", {
+      type: contentType
+    });
+    const uploadedUrl = await client.storage.upload(file);
     return {
-      value: initiated.file_url,
+      value: uploadedUrl,
       record: {
         inputPath: request.inputPath,
         localPath: request.localPath,
         status: "uploaded",
         resolvedValueKind: "remote_url",
-        resolvedValuePreview: previewResolvedValue("remote_url", initiated.file_url),
+        resolvedValuePreview: previewResolvedValue(uploadedUrl),
         contentType,
         size: buffer.byteLength
       }
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (buffer.byteLength <= INLINE_DATA_FALLBACK_LIMIT) {
-      const dataUrl = buildInlineDataUrl(buffer, contentType);
-      return {
-        value: dataUrl,
-        record: {
-          inputPath: request.inputPath,
-          localPath: request.localPath,
-          status: "embedded_data",
-          resolvedValueKind: "inline_data",
-          resolvedValuePreview: previewResolvedValue("inline_data", dataUrl),
-          contentType,
-          size: buffer.byteLength,
-          error: `Storage upload failed, fell back to inline data: ${message}`
-        }
-      };
-    }
+    const message = addStorageNetworkHint(formatErrorWithCauses(error));
     throw new PreparedUploadError(
       `Storage upload failed for ${request.inputPath}`,
       [{
@@ -170,7 +125,7 @@ async function resolveUpload(
         status: "failed",
         contentType,
         size: buffer.byteLength,
-        error: `Storage upload failed and inline fallback was too large: ${message}`
+        error: `Storage upload failed: ${message}`
       }]
     );
   }

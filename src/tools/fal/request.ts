@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { createConfiguredFalClient, falApiRequest } from "../../fal/client.js";
 import { parseRequestHistoryResponse, summarizeRequestHistoryItem } from "../../fal/models.js";
+import { waitForQueueCompletion } from "../../fal/queue.js";
 import { buildPublicResultPayload } from "../../fal/result.js";
 import { materializeRunResult } from "../../fal/run-result.js";
 import { findRunRecord, loadRunRecord, saveRunRecord } from "../../fal/workspaces.js";
@@ -11,14 +12,16 @@ import type { PersistedState, RunRecord, SavedRequestHistorySession } from "../.
 import { okResponse, type FalToolContext } from "../shared.js";
 
 const requestSchema = z.object({
-  action: z.enum(["status", "result", "materialize", "cancel", "history", "history_next"]),
+  action: z.enum(["status", "wait", "result", "materialize", "cancel", "history", "history_next"]),
   endpointId: z.string().optional(),
   requestId: z.string().optional(),
   workspaceId: z.string().optional(),
   runId: z.string().optional(),
   cursor: z.string().optional(),
   limit: z.number().int().positive().max(50).optional(),
-  expandPayloads: z.boolean().optional()
+  expandPayloads: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().optional(),
+  pollIntervalMs: z.number().int().positive().optional()
 });
 
 async function resolveRunReference(context: FalToolContext, input: z.infer<typeof requestSchema>): Promise<RunRecord | null> {
@@ -103,7 +106,7 @@ export function registerFalRequestTool(context: FalToolContext): void {
     "fal_request",
     {
       title: "fal request follow-up",
-      description: "Use after fal_run to check status, fetch the final result, retry local artifact materialization, cancel a queue request, or inspect saved request history.",
+      description: "Use after fal_run to wait on a queue request, check one status, fetch the final result, retry local artifact materialization, cancel a request, or inspect saved request history.",
       inputSchema: requestSchema
     },
     async input => {
@@ -174,7 +177,7 @@ export function registerFalRequestTool(context: FalToolContext): void {
       if (!endpointId) {
         throw new Error("fal_request requires endpointId or a saved runId.");
       }
-      if (input.action !== "cancel" && input.action !== "result" && input.action !== "materialize" && input.action !== "status") {
+      if (input.action !== "cancel" && input.action !== "result" && input.action !== "materialize" && input.action !== "status" && input.action !== "wait") {
         throw new Error("Unsupported fal_request action.");
       }
 
@@ -244,6 +247,102 @@ export function registerFalRequestTool(context: FalToolContext): void {
           endpointId,
           requestId,
           status
+        });
+      }
+
+      if (input.action === "wait") {
+        if (!requestId) {
+          if (localRun) {
+            return okResponse({
+              ok: true,
+              action: "wait",
+              source: "local_run",
+              run: localRun,
+              hint: `Saved run ${localRun.runId} does not have a requestId yet.`
+            });
+          }
+          throw new Error("fal_request action=wait requires requestId or a saved queue run.");
+        }
+
+        const timeoutMs = input.timeoutMs ?? runtime.defaults.waitMs;
+        const pollIntervalMs = input.pollIntervalMs ?? runtime.defaults.pollIntervalMs;
+        const waitResult = await waitForQueueCompletion({
+          falClient,
+          endpointId,
+          requestId,
+          pollIntervalMs,
+          timeoutMs,
+          logs: true,
+          onStatus: async status => {
+            if (!localRun?.statusPath) {
+              return;
+            }
+            await writeJsonFile(localRun.statusPath, status);
+            const updated: RunRecord = {
+              ...localRun,
+              updatedAt: new Date().toISOString(),
+              status: status.status
+            };
+            const nextState = await saveRunRecord(runtime, withUpdatedState(context.getPersistedState(), updated), updated);
+            await context.savePersistedState(nextState, "fal_request_wait_status");
+          }
+        });
+
+        if (!waitResult.completed) {
+          return okResponse({
+            ok: true,
+            action: "wait",
+            endpointId,
+            requestId,
+            runId: localRun?.runId ?? null,
+            workspaceId: localRun?.workspaceId ?? null,
+            status: waitResult.latestStatus.status,
+            timedOut: waitResult.timedOut,
+            terminalFailure: waitResult.terminalFailure,
+            latestStatus: waitResult.latestStatus
+          });
+        }
+
+        const result = await falClient.queue.result(endpointId, { requestId });
+        if (localRun?.responsePath) {
+          const finalized = await materializeRunResult(
+            runtime,
+            withUpdatedState(context.getPersistedState(), localRun),
+            localRun,
+            result
+          );
+          await context.savePersistedState(finalized.nextState, "fal_request_wait_complete");
+          return okResponse({
+            ok: true,
+            action: "wait",
+            endpointId,
+            requestId,
+            workspaceId: localRun.workspaceId,
+            runId: localRun.runId,
+            status: "COMPLETED",
+            artifacts: finalized.artifacts,
+            artifactIssues: finalized.artifactIssues,
+            rawResultPath: finalized.rawResultPath,
+            result: finalized.publicResult
+          });
+        }
+
+        return okResponse({
+          ok: true,
+          action: "wait",
+          endpointId,
+          requestId,
+          status: "COMPLETED",
+          result: (() => {
+            const resultRecord = asRecord(result);
+            if (!resultRecord || !("data" in resultRecord)) {
+              return result;
+            }
+            return {
+              ...resultRecord,
+              data: buildPublicResultPayload(resultRecord.data)
+            };
+          })()
         });
       }
 

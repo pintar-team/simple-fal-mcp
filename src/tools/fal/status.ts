@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { summarizeRunTransferIssue } from "../../fal/diagnostics.js";
+import { findRunRecord } from "../../fal/workspaces.js";
 import { getMediaCapabilities } from "../../media/status.js";
 import {
   getFalAdminApiKey,
@@ -43,6 +45,10 @@ export function registerFalStatusTool(context: FalToolContext): void {
       const runtime = context.getRuntime();
       const media = await getMediaCapabilities();
       const capabilities = getFalCapabilities(auth);
+      const lastRun = state.workspaces?.lastRunId
+        ? await findRunRecord(runtime, state, state.workspaces.lastRunId)
+        : null;
+      const transferIssue = summarizeRunTransferIssue(lastRun);
 
       return okResponse({
         ok: true,
@@ -101,6 +107,9 @@ export function registerFalStatusTool(context: FalToolContext): void {
           lastWorkspaceId: state.workspaces?.lastWorkspaceId ?? null,
           lastRunId: state.workspaces?.lastRunId ?? null
         },
+        transfer: {
+          lastIssue: transferIssue
+        },
         setupWeb: {
           running: Boolean(setupWeb),
           url: setupWeb?.state.url ?? null,
@@ -108,7 +117,9 @@ export function registerFalStatusTool(context: FalToolContext): void {
           port: setupWeb?.state.port ?? null,
           error: context.getSetupWebError()
         },
-        hint: statusHint(context)
+        hint: transferIssue
+          ? `${statusHint(context)} Last transfer issue: ${transferIssue}`
+          : statusHint(context)
       });
     }
   );
