@@ -8,7 +8,7 @@ import {
 import { okResponse, type FalToolContext } from "../shared.js";
 
 const setupWebActionSchema = z.object({
-  action: z.enum(["status", "start", "stop"])
+  action: z.enum(["status", "start", "stop"]).describe("status checks the local setup panel, start opens it, stop closes it.")
 });
 
 function buildSetupWebStatusPayload(context: FalToolContext): Record<string, unknown> {
@@ -61,7 +61,7 @@ export function registerFalSetupWebTools(context: FalToolContext): void {
     "fal_setup_web",
     {
       title: "fal setup web control",
-      description: "Use the local setup panel on demand. action=status checks it, action=start opens it, and action=stop closes it.",
+      description: "Control the local setup panel on demand. Use status to inspect it, start to open it, and stop to close it.",
       inputSchema: setupWebActionSchema
     },
     async input => handleSetupWebAction(context, input.action)

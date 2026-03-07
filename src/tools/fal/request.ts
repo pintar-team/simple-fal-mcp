@@ -12,7 +12,7 @@ import type { PersistedState, RunRecord, SavedRequestHistorySession } from "../.
 import { okResponse, type FalToolContext } from "../shared.js";
 
 const requestSchema = z.object({
-  action: z.enum(["status", "wait", "result", "materialize", "cancel", "history", "history_next"]),
+  action: z.enum(["status", "wait", "result", "materialize", "cancel", "history", "history_next"]).describe("status/wait/result follow one request, materialize retries downloads, cancel stops queue work, history browses past requests."),
   endpointId: z.string().optional(),
   requestId: z.string().optional(),
   workspaceId: z.string().optional(),
@@ -106,7 +106,7 @@ export function registerFalRequestTool(context: FalToolContext): void {
     "fal_request",
     {
       title: "fal request follow-up",
-      description: "Use after fal_run to wait on a queue request, check one status, fetch the final result, retry local artifact materialization, cancel a request, or inspect saved request history.",
+      description: "Use after fal_run to wait on a queue request, check status, fetch the final result, retry local downloads, cancel a request, or inspect saved request history.",
       inputSchema: requestSchema
     },
     async input => {

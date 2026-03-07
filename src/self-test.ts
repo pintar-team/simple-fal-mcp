@@ -13,7 +13,8 @@ import { buildModelDetail } from "./fal/models.js";
 import { isCommandAvailable, runCommand } from "./media/command.js";
 import { inspectLocalFile } from "./media/inspect.js";
 import { resizeImage } from "./media/images.js";
-import { extractFrame, imageSequenceToVideo } from "./media/video.js";
+import { getLocalSystemCommand } from "./media/system.js";
+import { extractFrame, imageSequenceToVideo, reverseAudio, reverseVideo } from "./media/video.js";
 import { materializeArtifactsToWorkspace } from "./fal/result.js";
 import { createRunId, ensureWorkspace, getWorkspaceDetails, saveRunRecord } from "./fal/workspaces.js";
 import { writeJsonFile } from "./runtime/files.js";
@@ -71,6 +72,22 @@ function testFalClientRetainsCredentialsAcrossCalls(): void {
   }
   if (seen.some(entry => typeof entry.fetch !== "function")) {
     throw new Error("fal client reconfiguration did not preserve fetch");
+  }
+}
+
+function testLocalSystemCommands(): void {
+  const macOpen = getLocalSystemCommand("open", "/tmp/example.png", "darwin");
+  const macReveal = getLocalSystemCommand("reveal", "/tmp/example.png", "darwin");
+  const linuxReveal = getLocalSystemCommand("reveal", "/tmp/example.png", "linux");
+
+  if (macOpen.command !== "open" || macOpen.args[0] !== "/tmp/example.png") {
+    throw new Error("open command mapping is incorrect for macOS");
+  }
+  if (macReveal.command !== "open" || macReveal.args[0] !== "-R") {
+    throw new Error("reveal command mapping is incorrect for macOS");
+  }
+  if (linuxReveal.command !== "xdg-open" || linuxReveal.args[0] !== "/tmp") {
+    throw new Error("reveal command mapping is incorrect for Linux");
   }
 }
 
@@ -297,6 +314,9 @@ async function testMediaHelpers(): Promise<string> {
 
   const sourceVideo = path.join(rootDir, "source.mp4");
   const framePath = path.join(rootDir, "frame.png");
+  const reversedVideo = path.join(rootDir, "source-reverse.mp4");
+  const sourceAudio = path.join(rootDir, "source.wav");
+  const reversedAudio = path.join(rootDir, "source-reverse.wav");
 
   await runCommand("ffmpeg", [
     "-y",
@@ -323,6 +343,28 @@ async function testMediaHelpers(): Promise<string> {
   });
   if (!existsSync(sequenceVideo)) {
     throw new Error("image sequence helper did not produce an output file");
+  }
+
+  await reverseVideo(sourceVideo, reversedVideo, {
+    format: "mp4"
+  });
+  if (!existsSync(reversedVideo)) {
+    throw new Error("video reverse helper did not produce an output file");
+  }
+
+  await runCommand("ffmpeg", [
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "sine=frequency=440:duration=1",
+    sourceAudio
+  ]);
+  await reverseAudio(sourceAudio, reversedAudio, {
+    format: "wav"
+  });
+  if (!existsSync(reversedAudio)) {
+    throw new Error("audio reverse helper did not produce an output file");
   }
 
   return "media_helpers";
@@ -375,6 +417,7 @@ function testCostParsing(): void {
 async function main(): Promise<void> {
   testSetupPageSecretHandling();
   testFalClientRetainsCredentialsAcrossCalls();
+  testLocalSystemCommands();
   await testWorkspaceRoundTrip();
   testOpenApiSummary();
   await testInlineArtifactMaterialization();
@@ -386,6 +429,7 @@ async function main(): Promise<void> {
     checks: [
       "setup_page_secret_handling",
       "fal_client_credentials_persist",
+      "local_system_commands",
       "workspace_round_trip",
       "openapi_summary",
       "inline_artifact_materialization",

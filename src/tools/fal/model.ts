@@ -8,7 +8,7 @@ import type { SavedModelSearchSession } from "../../runtime.js";
 import { okResponse, type FalToolContext } from "../shared.js";
 
 const searchActionSchema = z.object({
-  action: z.enum(["search", "next", "get", "pricing", "estimate"]),
+  action: z.enum(["search", "next", "get", "pricing", "estimate"]).describe("search and next browse models, get inspects one model, pricing reads live price, estimate plans cost."),
   query: z.string().optional(),
   category: z.string().optional(),
   status: z.string().optional(),
@@ -31,7 +31,7 @@ export function registerFalModelTool(context: FalToolContext): void {
     "fal_model",
     {
       title: "fal model discovery",
-      description: "Find fal endpoints, continue the saved search cursor, inspect one model, or query price and estimate data. Use schemaMode=summary first; request raw OpenAPI only when needed.",
+      description: "Find fal endpoints, continue saved model search, inspect one model, or read price and estimate data. Use schemaMode=summary first and request raw OpenAPI only when needed.",
       inputSchema: searchActionSchema
     },
     async input => {

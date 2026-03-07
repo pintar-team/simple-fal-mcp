@@ -14,19 +14,19 @@ import type { RunRecord } from "../../runtime.js";
 import { okResponse, type FalToolContext } from "../shared.js";
 
 const runSchema = z.object({
-  endpointId: z.string(),
-  input: z.record(z.unknown()).default({}),
+  endpointId: z.string().describe("fal endpoint id to call, for example fal-ai/nano-banana-2."),
+  input: z.record(z.unknown()).default({}).describe("Raw model input payload."),
   uploadFiles: z.array(z.object({
     inputPath: z.string(),
     localPath: z.string()
-  })).optional(),
-  mode: z.enum(["queue", "sync"]).optional(),
-  wait: z.enum(["submit", "complete"]).optional(),
-  waitMs: z.number().int().positive().optional(),
-  workspaceId: z.string().optional(),
-  workspaceLabel: z.string().optional(),
-  priority: z.enum(["low", "normal"]).optional(),
-  hint: z.string().optional()
+  })).optional().describe("Optional local-file uploads mapped into the input with JSON pointers."),
+  mode: z.enum(["queue", "sync"]).optional().describe("Use queue by default. Sync is only for short direct calls."),
+  wait: z.enum(["submit", "complete"]).optional().describe("submit returns request ids right away; complete waits for a bounded time."),
+  waitMs: z.number().int().positive().optional().describe("Optional wait timeout when wait=complete."),
+  workspaceId: z.string().optional().describe("Existing workspace id to save run files into."),
+  workspaceLabel: z.string().optional().describe("Optional label when a new workspace is created."),
+  priority: z.enum(["low", "normal"]).optional().describe("Optional queue priority when supported."),
+  hint: z.string().optional().describe("Optional execution hint passed through to fal.")
 });
 
 const SAFE_COMPLETE_WAIT_MS = 95_000;
@@ -42,7 +42,7 @@ export function registerFalRunTool(context: FalToolContext): void {
     "fal_run",
     {
       title: "run a fal model",
-      description: "Submit one fal model run. Default wait=submit returns request IDs immediately. Use uploadFiles for local files, then follow with fal_request action=wait|status|result.",
+      description: "Submit one fal model run. Default wait=submit returns request ids immediately, then use fal_request to wait, inspect status, or fetch the final result.",
       inputSchema: runSchema
     },
     async input => {

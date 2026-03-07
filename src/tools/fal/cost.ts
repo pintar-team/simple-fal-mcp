@@ -17,7 +17,7 @@ import type { PersistedState, RunRecord, SavedUsageSession } from "../../runtime
 import { okResponse, type FalToolContext } from "../shared.js";
 
 const costSchema = z.object({
-  action: z.enum(["price", "estimate", "usage", "usage_next", "request"]),
+  action: z.enum(["price", "estimate", "usage", "usage_next", "request"]).describe("price reads live unit price, estimate plans cost, usage browses admin usage buckets, request inspects one saved run or request."),
   endpointId: z.string().optional(),
   endpointIds: z.array(z.string()).optional(),
   requestId: z.string().optional(),
@@ -76,7 +76,7 @@ export function registerFalCostTool(context: FalToolContext): void {
     "fal_cost",
     {
       title: "fal pricing and cost",
-      description: "Use price for live unit pricing, estimate for planned calls, request for one saved run or request, and usage only when an admin key is configured.",
+      description: "Read live pricing, estimate planned calls, inspect one saved run or request, and use admin-only usage reports when an admin key is configured.",
       inputSchema: costSchema
     },
     async input => {

@@ -49,9 +49,10 @@ Local media post-process is also available through `fal_media`. Image work uses 
   - `action: "list" | "get" | "delete" | "cleanup"` manages local temporary workspaces.
 - `fal_media`
   - `action: "inspect"` returns local image/video/audio metadata.
+  - `action: "open" | "reveal"` opens the file in the default app or shows it in Finder/file manager.
   - `action: "image_convert" | "image_resize"` handles common image transforms with `sharp`.
-  - `action: "video_convert" | "video_trim" | "video_concat" | "image_sequence_to_video" | "extract_frame" | "mux_audio"` handles common video post-process with `ffmpeg`.
-  - `action: "audio_convert" | "audio_concat"` handles common audio conversions and glue steps with `ffmpeg`.
+  - `action: "video_convert" | "video_trim" | "video_reverse" | "video_concat" | "image_sequence_to_video" | "extract_frame" | "mux_audio"` handles common video post-process with `ffmpeg`.
+  - `action: "audio_convert" | "audio_reverse" | "audio_concat"` handles common audio conversions and glue steps with `ffmpeg`.
 
 ## Install
 

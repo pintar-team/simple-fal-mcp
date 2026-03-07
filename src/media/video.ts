@@ -101,6 +101,43 @@ export async function trimVideo(
   await runCommand("ffmpeg", args);
 }
 
+export async function reverseVideo(
+  inputPath: string,
+  outputPath: string,
+  options: {
+    format: VideoOutputFormat;
+    videoCodec?: VideoCodec;
+    audioCodec?: AudioCodec;
+    reverseAudio?: boolean;
+  }
+): Promise<void> {
+  const args = [
+    "-y",
+    "-i",
+    inputPath,
+    "-vf",
+    "reverse",
+    ...mapVideoCodec(options.videoCodec === "copy" ? undefined : options.videoCodec, options.format)
+  ];
+
+  if (options.reverseAudio) {
+    args.push(
+      "-af",
+      "areverse",
+      ...mapAudioCodec(options.audioCodec === "copy" ? undefined : options.audioCodec, options.format)
+    );
+  } else {
+    args.push(...mapAudioCodec(options.audioCodec, options.format));
+  }
+
+  args.push(
+    ...(options.format === "mp4" ? ["-movflags", "+faststart"] : []),
+    outputPath
+  );
+
+  await runCommand("ffmpeg", args);
+}
+
 export async function concatVideos(
   inputPaths: string[],
   outputPath: string,
@@ -231,6 +268,25 @@ export async function convertAudio(
     "-i",
     inputPath,
     ...mapAudioCodec(options.audioCodec, options.format),
+    outputPath
+  ]);
+}
+
+export async function reverseAudio(
+  inputPath: string,
+  outputPath: string,
+  options: {
+    format: AudioOutputFormat;
+    audioCodec?: AudioCodec;
+  }
+): Promise<void> {
+  await runCommand("ffmpeg", [
+    "-y",
+    "-i",
+    inputPath,
+    "-af",
+    "areverse",
+    ...mapAudioCodec(options.audioCodec === "copy" ? undefined : options.audioCodec, options.format),
     outputPath
   ]);
 }

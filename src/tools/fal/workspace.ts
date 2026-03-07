@@ -4,7 +4,7 @@ import { cleanupWorkspaces, deleteWorkspace, getWorkspaceDetails } from "../../f
 import { okResponse, type FalToolContext } from "../shared.js";
 
 const workspaceSchema = z.object({
-  action: z.enum(["list", "get", "delete", "cleanup"]),
+  action: z.enum(["list", "get", "delete", "cleanup"]).describe("list and get inspect workspaces, delete removes one, cleanup prunes old temporary workspaces."),
   workspaceId: z.string().optional(),
   olderThanHours: z.number().nonnegative().optional()
 });
@@ -14,7 +14,7 @@ export function registerFalWorkspaceTool(context: FalToolContext): void {
     "fal_workspace",
     {
       title: "fal workspace manager",
-      description: "Inspect saved workspaces and runs, including upload and artifact issues, or delete and clean old temporary workspaces.",
+      description: "Inspect saved workspaces and runs, including upload and artifact issues, or delete and clean temporary workspaces.",
       inputSchema: workspaceSchema
     },
     async input => {

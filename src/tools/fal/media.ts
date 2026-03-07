@@ -5,6 +5,7 @@ import { z } from "zod";
 import { inspectLocalFile } from "../../media/inspect.js";
 import { convertImage, resizeImage, type ImageFit, type ImageOutputFormat } from "../../media/images.js";
 import { resolveInputPath, resolveOutputPath } from "../../media/paths.js";
+import { performLocalSystemAction } from "../../media/system.js";
 import {
   concatAudio,
   concatVideos,
@@ -13,6 +14,8 @@ import {
   extractFrame,
   imageSequenceToVideo,
   muxAudioTrack,
+  reverseAudio,
+  reverseVideo,
   trimVideo,
   type AudioCodec,
   type AudioOutputFormat,
@@ -28,45 +31,51 @@ const audioFormats = ["mp3", "wav", "m4a"] as const;
 const imageFits = ["cover", "contain", "fill", "inside", "outside"] as const;
 const videoCodecs = ["h264", "hevc", "vp9", "copy"] as const;
 const audioCodecs = ["aac", "opus", "mp3", "pcm", "copy", "none"] as const;
+const mediaActions = [
+  "inspect",
+  "open",
+  "reveal",
+  "image_convert",
+  "image_resize",
+  "video_convert",
+  "video_trim",
+  "video_reverse",
+  "video_concat",
+  "image_sequence_to_video",
+  "extract_frame",
+  "mux_audio",
+  "audio_convert",
+  "audio_reverse",
+  "audio_concat"
+] as const;
 
 const mediaSchema = z.object({
-  action: z.enum([
-    "inspect",
-    "image_convert",
-    "image_resize",
-    "video_convert",
-    "video_trim",
-    "video_concat",
-    "image_sequence_to_video",
-    "extract_frame",
-    "mux_audio",
-    "audio_convert",
-    "audio_concat"
-  ]),
-  inputPath: z.string().optional(),
-  inputPaths: z.array(z.string()).optional(),
-  videoPath: z.string().optional(),
-  audioPath: z.string().optional(),
-  outputPath: z.string().optional(),
-  workspaceId: z.string().optional(),
-  workspaceLabel: z.string().optional(),
+  action: z.enum(mediaActions).describe("What to do: inspect, open, reveal, or run one media transform."),
+  inputPath: z.string().optional().describe("One local file path. Can be workspace-relative when workspaceId is provided."),
+  inputPaths: z.array(z.string()).optional().describe("Two or more local file paths for concat or image-sequence actions."),
+  videoPath: z.string().optional().describe("Video input path for mux or open/reveal."),
+  audioPath: z.string().optional().describe("Audio input path for mux or open/reveal."),
+  outputPath: z.string().optional().describe("Optional explicit output path. Omit it to write back into the workspace."),
+  workspaceId: z.string().optional().describe("Workspace to resolve relative paths against and to store generated outputs in."),
+  workspaceLabel: z.string().optional().describe("Optional label when a new workspace needs to be created."),
   format: z.enum([
     ...imageFormats,
     ...frameFormats,
     ...videoFormats,
     ...audioFormats
-  ]).optional(),
-  width: z.number().int().positive().optional(),
-  height: z.number().int().positive().optional(),
-  fit: z.enum(imageFits).optional(),
-  quality: z.number().int().min(1).max(100).optional(),
-  startSeconds: z.number().nonnegative().optional(),
-  durationSeconds: z.number().positive().optional(),
-  timeSeconds: z.number().nonnegative().optional(),
-  fps: z.number().positive().optional(),
-  imageDurationSeconds: z.number().positive().optional(),
-  videoCodec: z.enum(videoCodecs).optional(),
-  audioCodec: z.enum(audioCodecs).optional()
+  ]).optional().describe("Target format for conversion-style actions."),
+  width: z.number().int().positive().optional().describe("Target width for image resizing."),
+  height: z.number().int().positive().optional().describe("Target height for image resizing."),
+  fit: z.enum(imageFits).optional().describe("Sharp resize fit mode. Use cover for exact frame size."),
+  quality: z.number().int().min(1).max(100).optional().describe("Quality for lossy image conversions."),
+  startSeconds: z.number().nonnegative().optional().describe("Trim start time in seconds."),
+  durationSeconds: z.number().positive().optional().describe("Trim length or per-image duration when relevant."),
+  timeSeconds: z.number().nonnegative().optional().describe("Frame extraction time in seconds."),
+  fps: z.number().positive().optional().describe("Target frames per second for video creation or conversion."),
+  imageDurationSeconds: z.number().positive().optional().describe("How long each image should stay on screen in image_sequence_to_video."),
+  videoCodec: z.enum(videoCodecs).optional().describe("Optional ffmpeg video codec override."),
+  audioCodec: z.enum(audioCodecs).optional().describe("Optional ffmpeg audio codec override."),
+  reverseAudio: z.boolean().optional().describe("When reversing video, also reverse the audio track.")
 });
 
 function requireString(value: string | undefined, field: string): string {
@@ -100,7 +109,7 @@ export function registerFalMediaTool(context: FalToolContext): void {
     "fal_media",
     {
       title: "fal media postprocess",
-      description: "Inspect or transform local media files. Prefer workspace-relative paths with workspaceId, and omit outputPath to write results back into that workspace.",
+      description: "Inspect, open, reveal, or transform local media files. Prefer workspace-relative paths with workspaceId, and omit outputPath to write outputs back into that workspace.",
       inputSchema: mediaSchema
     },
     async input => {
@@ -108,17 +117,27 @@ export function registerFalMediaTool(context: FalToolContext): void {
       const runtime = context.getRuntime();
       let state = context.getPersistedState();
 
-      if (input.action === "inspect") {
+      if (input.action === "inspect" || input.action === "open" || input.action === "reveal") {
         const inputPath = resolveInputPath(
           runtime,
           requireString(input.inputPath ?? input.videoPath ?? input.audioPath, "inputPath"),
           input.workspaceId
         );
+        if (input.action === "inspect") {
+          return okResponse({
+            ok: true,
+            action: "inspect",
+            inputPath,
+            inspection: await inspectLocalFile(inputPath)
+          });
+        }
+        const systemAction = await performLocalSystemAction(input.action, inputPath);
         return okResponse({
           ok: true,
-          action: "inspect",
+          action: input.action,
           inputPath,
-          inspection: await inspectLocalFile(inputPath)
+          command: systemAction.command,
+          args: systemAction.args
         });
       }
 
@@ -236,6 +255,33 @@ export function registerFalMediaTool(context: FalToolContext): void {
           inputPath,
           outputPath: output.outputPath,
           workspaceId: output.workspaceId ?? null,
+          inspection: await inspectLocalFile(output.outputPath)
+        });
+      }
+
+      if (input.action === "video_reverse") {
+        const inputPath = resolveInputPath(runtime, requireString(input.inputPath, "inputPath"), input.workspaceId);
+        const format = (input.format as VideoOutputFormat | undefined) ?? "mp4";
+        const output = await persistWorkspaceState({
+          outputPath: input.outputPath,
+          workspaceId: input.workspaceId,
+          workspaceLabel: input.workspaceLabel,
+          baseName: `${stemFromPath(inputPath)}-reverse`,
+          extension: format
+        });
+        await reverseVideo(inputPath, output.outputPath, {
+          format,
+          reverseAudio: input.reverseAudio ?? false,
+          videoCodec: input.videoCodec as VideoCodec | undefined,
+          audioCodec: input.audioCodec as AudioCodec | undefined
+        });
+        return okResponse({
+          ok: true,
+          action: "video_reverse",
+          inputPath,
+          outputPath: output.outputPath,
+          workspaceId: output.workspaceId ?? null,
+          reverseAudio: input.reverseAudio ?? false,
           inspection: await inspectLocalFile(output.outputPath)
         });
       }
@@ -359,6 +405,30 @@ export function registerFalMediaTool(context: FalToolContext): void {
         return okResponse({
           ok: true,
           action: "audio_convert",
+          inputPath,
+          outputPath: output.outputPath,
+          workspaceId: output.workspaceId ?? null,
+          inspection: await inspectLocalFile(output.outputPath)
+        });
+      }
+
+      if (input.action === "audio_reverse") {
+        const inputPath = resolveInputPath(runtime, requireString(input.inputPath ?? input.audioPath, "inputPath"), input.workspaceId);
+        const format = (input.format as AudioOutputFormat | undefined) ?? "wav";
+        const output = await persistWorkspaceState({
+          outputPath: input.outputPath,
+          workspaceId: input.workspaceId,
+          workspaceLabel: input.workspaceLabel,
+          baseName: `${stemFromPath(inputPath)}-reverse`,
+          extension: format
+        });
+        await reverseAudio(inputPath, output.outputPath, {
+          format,
+          audioCodec: input.audioCodec as AudioCodec | undefined
+        });
+        return okResponse({
+          ok: true,
+          action: "audio_reverse",
           inputPath,
           outputPath: output.outputPath,
           workspaceId: output.workspaceId ?? null,
