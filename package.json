@@ -28,7 +28,8 @@
   "packageManager": "bun@1.3.9",
   "files": [
     "build",
-    "README.md"
+    "README.md",
+    "img"
   ],
   "scripts": {
     "build": "bun run typecheck && bunx tsc",
