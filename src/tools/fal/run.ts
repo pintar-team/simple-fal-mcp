@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import { createConfiguredFalClient } from "../../fal/client.js";
+import { fetchQueueResultOutcome, materializeRunFailure } from "../../fal/final-result.js";
 import { waitForQueueCompletion } from "../../fal/queue.js";
 import { materializeRunResult } from "../../fal/run-result.js";
 import { prepareInputUploads } from "../../fal/uploads.js";
@@ -206,25 +207,49 @@ export function registerFalRunTool(context: FalToolContext): void {
       });
 
       if (waitResult.completed) {
-        const result = await falClient.queue.result(input.endpointId, {
-          requestId: enqueued.request_id
+        const finalOutcome = await fetchQueueResultOutcome({
+          apiKey,
+          falClient,
+          endpointId: input.endpointId,
+          requestId: enqueued.request_id,
+          latestStatus: waitResult.latestStatus
         });
-        const finalized = await materializeRunResult(runtime, nextState, record, result);
-        nextState = finalized.nextState;
-        await context.savePersistedState(nextState, "fal_run_complete");
+        if (finalOutcome.kind === "success") {
+          const finalized = await materializeRunResult(runtime, nextState, record, finalOutcome.result);
+          nextState = finalized.nextState;
+          await context.savePersistedState(nextState, "fal_run_complete");
+          return okResponse({
+            ok: true,
+            mode: "queue",
+            status: "COMPLETED",
+            workspaceId: record.workspaceId,
+            runId: record.runId,
+            requestId: enqueued.request_id,
+            uploads: record.uploads ?? [],
+            artifacts: finalized.artifacts,
+            artifactIssues: finalized.artifactIssues,
+            rawResultPath: finalized.rawResultPath,
+            result: finalized.publicResult,
+            historyNote
+          });
+        }
+
+        const failed = await materializeRunFailure(runtime, nextState, record, finalOutcome.failure, finalOutcome.responseBody);
+        nextState = failed.nextState;
+        await context.savePersistedState(nextState, "fal_run_provider_failure");
         return okResponse({
           ok: true,
           mode: "queue",
-          status: "COMPLETED",
+          status: "FAILED",
+          queueStatus: waitResult.latestStatus.status,
           workspaceId: record.workspaceId,
           runId: record.runId,
           requestId: enqueued.request_id,
           uploads: record.uploads ?? [],
-          artifacts: finalized.artifacts,
-          artifactIssues: finalized.artifactIssues,
-          rawResultPath: finalized.rawResultPath,
-          result: finalized.publicResult,
-          historyNote
+          rawResultPath: failed.rawResultPath,
+          error: finalOutcome.failure,
+          historyNote,
+          latestStatus: waitResult.latestStatus
         });
       }
 

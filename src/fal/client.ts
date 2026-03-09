@@ -72,7 +72,7 @@ export async function falApiRequest<T>(pathname: string, options: RequestOptions
   return await response.json() as T;
 }
 
-function getFalFetch(): typeof fetch {
+export function getFalFetch(): typeof fetch {
   if (!configuredFetch) {
     configuredFetch = createFetchWithDuplex(fetch);
     globalThis.fetch = configuredFetch;

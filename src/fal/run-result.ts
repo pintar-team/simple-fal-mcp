@@ -48,7 +48,8 @@ export async function materializeRunResult(
     status: "COMPLETED",
     artifacts: materialized.artifacts,
     artifactIssues: materialized.artifactIssues,
-    error: undefined
+    error: undefined,
+    providerFailure: undefined
   };
   const nextState = await saveRunRecord(runtime, state, updatedRun);
 

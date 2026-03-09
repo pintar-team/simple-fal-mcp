@@ -5,10 +5,11 @@ import { mkdir } from "node:fs/promises";
 import http from "node:http";
 
 import sharp from "sharp";
-import { fal } from "@fal-ai/client";
+import { ValidationError, fal } from "@fal-ai/client";
 
 import { inferUsageQuantity, parseUsageResponse } from "./fal/cost.js";
 import { createConfiguredFalClient } from "./fal/client.js";
+import { buildProviderFailure } from "./fal/final-result.js";
 import { buildModelDetail } from "./fal/models.js";
 import { isCommandAvailable, runCommand } from "./media/command.js";
 import { inspectLocalFile } from "./media/inspect.js";
@@ -72,6 +73,36 @@ function testFalClientRetainsCredentialsAcrossCalls(): void {
   }
   if (seen.some(entry => typeof entry.fetch !== "function")) {
     throw new Error("fal client reconfiguration did not preserve fetch");
+  }
+}
+
+function testProviderFailureNormalization(): void {
+  const error = new ValidationError({
+    message: "Unprocessable Entity",
+    status: 422,
+    body: {
+      detail: "No complete upper body detected in the video; ensure the upper body is clearly visible."
+    },
+    requestId: "req-123",
+    timeoutType: undefined
+  });
+  const normalized = buildProviderFailure(error, "req-123", {
+    status: "COMPLETED",
+    request_id: "req-123",
+    response_url: "https://queue.fal.run/example/requests/req-123",
+    status_url: "https://queue.fal.run/example/requests/req-123/status",
+    cancel_url: "https://queue.fal.run/example/requests/req-123/cancel",
+    logs: []
+  });
+
+  if (normalized.failure.message !== "No complete upper body detected in the video; ensure the upper body is clearly visible.") {
+    throw new Error("provider failure normalization did not surface the real model error message");
+  }
+  if (normalized.failure.errorType !== "validation_error") {
+    throw new Error("provider failure normalization did not preserve validation_error type");
+  }
+  if ((normalized.responseBody.providerResponse as Record<string, unknown>)?.detail !== "No complete upper body detected in the video; ensure the upper body is clearly visible.") {
+    throw new Error("provider failure response body did not preserve the original provider detail");
   }
 }
 
@@ -417,6 +448,7 @@ function testCostParsing(): void {
 async function main(): Promise<void> {
   testSetupPageSecretHandling();
   testFalClientRetainsCredentialsAcrossCalls();
+  testProviderFailureNormalization();
   testLocalSystemCommands();
   await testWorkspaceRoundTrip();
   testOpenApiSummary();

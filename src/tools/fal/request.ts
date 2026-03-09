@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { createConfiguredFalClient, falApiRequest } from "../../fal/client.js";
+import { fetchQueueResultOutcome, materializeRunFailure } from "../../fal/final-result.js";
 import { parseRequestHistoryResponse, summarizeRequestHistoryItem } from "../../fal/models.js";
 import { waitForQueueCompletion } from "../../fal/queue.js";
 import { buildPublicResultPayload } from "../../fal/result.js";
@@ -303,13 +304,56 @@ export function registerFalRequestTool(context: FalToolContext): void {
           });
         }
 
-        const result = await falClient.queue.result(endpointId, { requestId });
+        const finalOutcome = await fetchQueueResultOutcome({
+          apiKey,
+          falClient,
+          endpointId,
+          requestId,
+          latestStatus: waitResult.latestStatus
+        });
+        if (finalOutcome.kind === "provider_failure") {
+          if (localRun?.responsePath) {
+            const failed = await materializeRunFailure(
+              runtime,
+              withUpdatedState(context.getPersistedState(), localRun),
+              localRun,
+              finalOutcome.failure,
+              finalOutcome.responseBody
+            );
+            await context.savePersistedState(failed.nextState, "fal_request_wait_provider_failure");
+            return okResponse({
+              ok: true,
+              action: "wait",
+              endpointId,
+              requestId,
+              workspaceId: localRun.workspaceId,
+              runId: localRun.runId,
+              status: "FAILED",
+              queueStatus: waitResult.latestStatus.status,
+              rawResultPath: failed.rawResultPath,
+              error: finalOutcome.failure,
+              latestStatus: waitResult.latestStatus
+            });
+          }
+
+          return okResponse({
+            ok: true,
+            action: "wait",
+            endpointId,
+            requestId,
+            status: "FAILED",
+            queueStatus: waitResult.latestStatus.status,
+            error: finalOutcome.failure,
+            latestStatus: waitResult.latestStatus,
+            result: finalOutcome.responseBody
+          });
+        }
         if (localRun?.responsePath) {
           const finalized = await materializeRunResult(
             runtime,
             withUpdatedState(context.getPersistedState(), localRun),
             localRun,
-            result
+            finalOutcome.result
           );
           await context.savePersistedState(finalized.nextState, "fal_request_wait_complete");
           return okResponse({
@@ -334,9 +378,9 @@ export function registerFalRequestTool(context: FalToolContext): void {
           requestId,
           status: "COMPLETED",
           result: (() => {
-            const resultRecord = asRecord(result);
+            const resultRecord = asRecord(finalOutcome.result);
             if (!resultRecord || !("data" in resultRecord)) {
-              return result;
+              return finalOutcome.result;
             }
             return {
               ...resultRecord,
@@ -366,16 +410,65 @@ export function registerFalRequestTool(context: FalToolContext): void {
         throw new Error(`fal_request action=${input.action} requires requestId or a saved completed run.`);
       }
 
-      const result = await falClient.queue.result(endpointId, { requestId });
+      const latestStatus = requestId
+        ? await falClient.queue.status(endpointId, {
+            requestId,
+            logs: true
+          }).catch(() => undefined)
+        : undefined;
+      const finalOutcome = await fetchQueueResultOutcome({
+        apiKey,
+        falClient,
+        endpointId,
+        requestId,
+        latestStatus
+      });
+      if (finalOutcome.kind === "provider_failure") {
+        if (localRun?.responsePath) {
+          const failed = await materializeRunFailure(
+            runtime,
+            withUpdatedState(context.getPersistedState(), localRun),
+            localRun,
+            finalOutcome.failure,
+            finalOutcome.responseBody
+          );
+          await context.savePersistedState(failed.nextState, "fal_request_result_provider_failure");
+          return okResponse({
+            ok: true,
+            action: input.action,
+            endpointId,
+            requestId,
+            workspaceId: localRun.workspaceId,
+            runId: localRun.runId,
+            status: "FAILED",
+            queueStatus: latestStatus?.status ?? null,
+            rawResultPath: failed.rawResultPath,
+            error: finalOutcome.failure,
+            latestStatus: latestStatus ?? null
+          });
+        }
+
+        return okResponse({
+          ok: true,
+          action: input.action,
+          endpointId,
+          requestId,
+          status: "FAILED",
+          queueStatus: latestStatus?.status ?? null,
+          error: finalOutcome.failure,
+          latestStatus: latestStatus ?? null,
+          result: finalOutcome.responseBody
+        });
+      }
       if (localRun?.responsePath) {
         if (input.action === "materialize") {
-          return materializeLocalRunResult(context, localRun, result);
+          return materializeLocalRunResult(context, localRun, finalOutcome.result);
         }
         const finalized = await materializeRunResult(
           runtime,
           withUpdatedState(context.getPersistedState(), localRun),
           localRun,
-          result
+          finalOutcome.result
         );
         await context.savePersistedState(finalized.nextState, "fal_request_result");
         return okResponse({
@@ -402,9 +495,9 @@ export function registerFalRequestTool(context: FalToolContext): void {
         endpointId,
         requestId,
         result: (() => {
-          const resultRecord = asRecord(result);
+          const resultRecord = asRecord(finalOutcome.result);
           if (!resultRecord || !("data" in resultRecord)) {
-            return result;
+            return finalOutcome.result;
           }
           return {
             ...resultRecord,

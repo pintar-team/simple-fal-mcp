@@ -145,6 +145,18 @@ export type RunUploadRecord = {
   error?: string;
 };
 
+export type RunFailureRecord = {
+  stage: "provider_result";
+  queueStatus?: string;
+  providerStatus?: string;
+  httpStatus?: number;
+  errorType?: string;
+  message: string;
+  requestId?: string;
+  responseUrl?: string;
+  detailMessages?: string[];
+};
+
 export type RunRecord = {
   runId: string;
   workspaceId: string;
@@ -186,6 +198,7 @@ export type RunRecord = {
     };
   };
   error?: string;
+  providerFailure?: RunFailureRecord;
 };
 
 export type WorkspaceIndexEntry = {

@@ -1,6 +1,6 @@
 {
   "name": "simple-fal-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Model Context Protocol (MCP) server for fal.ai model discovery, execution, and ephemeral local workspaces.",
   "repository": {
     "type": "git",

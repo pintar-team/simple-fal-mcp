@@ -216,7 +216,9 @@ export async function getWorkspaceDetails(runtime: RuntimeConfig, state: Persist
       uploads: run.uploads ?? [],
       artifacts: run.artifacts,
       artifactIssues: run.artifactIssues ?? [],
-      cost: run.cost ?? null
+      cost: run.cost ?? null,
+      error: run.error ?? null,
+      providerFailure: run.providerFailure ?? null
     }))
   };
 }
